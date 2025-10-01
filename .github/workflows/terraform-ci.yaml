@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: tf
+        working-directory: .
 
     steps:
       - name: Checkout
@@ -52,7 +52,7 @@ jobs:
     needs: terraform
     defaults:
       run:
-        working-directory: tf
+        working-directory: .
   
     steps:
       - name: Checkout
@@ -75,3 +75,4 @@ jobs:
         run: |
           terraform plan -input=false -no-color -out=plan.tfplan
           terraform apply -input=false -auto-approve plan.tfplan
+
