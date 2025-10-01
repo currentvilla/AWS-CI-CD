@@ -12,3 +12,5 @@ resource "aws_instance" "public_ec2a" {
     Name = "Public-EC2a"
   }
 }
+
+# PR trigger: noop (no functional change)
