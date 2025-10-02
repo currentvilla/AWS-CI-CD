@@ -1,5 +1,5 @@
 resource "aws_instance" "public_ec2a" {
-  count         = 2
+  count         = 2 #EC2を一台増やす
   ami           = "ami-025bbcfb04b076789"
   instance_type = "t2.micro"
   subnet_id     = aws_subnet.public_a2.id

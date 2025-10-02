@@ -20,6 +20,7 @@ jobs:
       run:
         working-directory: .
 
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -53,6 +54,7 @@ jobs:
     defaults:
       run:
         working-directory: .
+
   
     steps:
       - name: Checkout
@@ -75,4 +77,3 @@ jobs:
         run: |
           terraform plan -input=false -no-color -out=plan.tfplan
           terraform apply -input=false -auto-approve plan.tfplan
-
