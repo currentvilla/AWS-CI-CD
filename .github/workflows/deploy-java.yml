@@ -1,0 +1,75 @@
+name: Deploy Java to EC2 via Ansible
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install Ansible
+        run: |
+          python -m pip install --upgrade pip
+          pip install "ansible>=7.0"
+
+      - name: Write SSH private key
+        env:
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          echo "$SSH_KEY" > ./id_rsa
+          chmod 600 ./id_rsa
+
+      - name: Build inventory from HOSTS secret (or use inventory/hosts.ini)
+        env:
+          HOSTS: ${{ secrets.HOSTS }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          # If HOSTS secret is empty, fallback to repo inventory/hosts.ini
+          if [ -n "$HOSTS" ]; then
+            rm -f ./inventory/hosts.ini
+            mkdir -p ./inventory
+            echo "[java_servers]" > ./inventory/hosts.ini
+            IFS=',' read -ra ADDR <<< "$HOSTS"
+            for h in "${ADDR[@]}"; do
+              echo "${h} ansible_user=${SSH_USER}" >> ./inventory/hosts.ini
+            done
+            echo "Generated inventory:"
+            cat ./inventory/hosts.ini
+          else
+            echo "Using repository inventory/hosts.ini"
+            cat ./inventory/hosts.ini || true
+          fi
+
+      - name: Add hosts to known_hosts (ssh-keyscan)
+        env:
+          HOSTS: ${{ secrets.HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          touch ~/.ssh/known_hosts
+          if [ -n "$HOSTS" ]; then
+            IFS=',' read -ra ADDR <<< "$HOSTS"
+            for h in "${ADDR[@]}"; do
+              # skip if already present
+              ssh-keygen -F "$h" || ssh-keyscan -H "$h" >> ~/.ssh/known_hosts || true
+            done
+          fi
+          echo "known_hosts:"
+          cat ~/.ssh/known_hosts | sed -n '1,10p' || true
+
+      - name: Run Ansible playbook (install Java)
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"
+        run: |
+          # Run the playbook, passing the private key and inventory
+          ansible-playbook -i ./inventory/hosts.ini playbooks/install-java.yml \
+            --private-key ./id_rsa
