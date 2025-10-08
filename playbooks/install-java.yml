@@ -1,0 +1,70 @@
+---
+- name: Install Java (OpenJDK) on EC2 instances
+  hosts: java_servers
+  become: true
+  gather_facts: true
+  vars:
+    # デフォルトは Java 11。必要なら group_vars/java_servers.yml で上書き可能
+    java_version: 11
+
+  tasks:
+    - name: Ensure apt cache updated (Debian family)
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_facts.os_family == "Debian"
+
+    - name: Ensure yum cache updated (RedHat family)
+      yum:
+        update_cache: yes
+      when: ansible_facts.os_family == "RedHat"
+
+    - name: Set java package name for Debian/Ubuntu
+      set_fact:
+        java_pkg: "openjdk-{{ java_version }}-jdk"
+      when: ansible_facts.os_family == "Debian"
+
+    - name: Set java package name for RedHat/Amazon Linux
+      set_fact:
+        java_pkg: "java-1.{{ java_version }}.0-openjdk-devel"
+      when: ansible_facts.os_family == "RedHat"
+
+    - name: Install Java package
+      package:
+        name: "{{ java_pkg }}"
+        state: present
+
+    - name: Determine JAVA_HOME path for Debian-like
+      set_fact:
+        java_home: "/usr/lib/jvm/java-{{ java_version }}-openjdk-amd64"
+      when: ansible_facts.os_family == "Debian"
+
+    - name: Determine JAVA_HOME path for RedHat-like
+      set_fact:
+        java_home: "/usr/lib/jvm/java-1.{{ java_version }}.0-openjdk"
+      when: ansible_facts.os_family == "RedHat"
+
+    - name: Create /etc/profile.d/java.sh to export JAVA_HOME and add to PATH
+      copy:
+        dest: /etc/profile.d/java.sh
+        content: |
+          #!/bin/sh
+          # Installed by ansible: ensure JAVA_HOME is available
+          export JAVA_HOME={{ java_home | default('') }}
+          if [ -n "$JAVA_HOME" ]; then
+            export PATH=$JAVA_HOME/bin:$PATH
+          fi
+        owner: root
+        group: root
+        mode: '0644'
+      when: java_home is defined
+
+    - name: Ensure java is callable (check java -version)
+      command: java -version
+      register: java_check
+      changed_when: false
+      failed_when: java_check.rc != 0
+
+    - name: Show java version
+      debug:
+        msg: "{{ java_check.stderr_lines }}"
