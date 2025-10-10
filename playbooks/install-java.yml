@@ -6,68 +6,66 @@
     java_version: 11
 
   tasks:
+    - name: Ensure dnf cache is updated
+      ansible.builtin.dnf:
+        update_cache: true
 
-  - name: Ensure dnf cache is updated
-    ansible.builtin.dnf:
-      update_cache: true
+    - name: Try install Amazon Corretto (java-{{ java_version }})
+      ansible.builtin.dnf:
+        name: "java-{{ java_version }}-amazon-corretto-devel"
+        state: present
+      register: corretto_result
+      ignore_errors: true
 
-  - name: Try install Amazon Corretto (java-{{ java_version }})
-    ansible.builtin.dnf:
-      name: "java-{{ java_version }}-amazon-corretto-devel"
-      state: present
-    register: corretto_result
-    ignore_errors: true
+    - name: If Corretto install failed, try OpenJDK package
+      ansible.builtin.dnf:
+        name: "java-{{ java_version }}-openjdk-devel"
+        state: present
+      when: corretto_result is failed
+      register: openjdk_result
+      ignore_errors: true
 
-  - name: If Corretto install failed, try OpenJDK package
-    ansible.builtin.dnf:
-      name: "java-{{ java_version }}-openjdk-devel"
-      state: present
-    when: corretto_result is failed
-    register: openjdk_result
-    ignore_errors: true
+    - name: Fail if neither Corretto nor OpenJDK installed
+      ansible.builtin.fail:
+        msg: "Failed to install Java: neither amazon-corretto nor openjdk package installed."
+      when:
+        - corretto_result is failed
+        - openjdk_result is failed or openjdk_result is not defined
 
-  - name: Fail if neither Corretto nor OpenJDK installed
-    ansible.builtin.fail:
-      msg: "Failed to install Java: neither amazon-corretto nor openjdk package installed."
-    when:
+    - name: Set java_home for Corretto if present
+      ansible.builtin.set_fact:
+        java_home: "/usr/lib/jvm/java-{{ java_version }}-amazon-corretto"
+      when: corretto_result is succeeded
 
-      - corretto_result is failed
-      - openjdk_result is failed or openjdk_result is not defined
+    - name: Set java_home for OpenJDK if Corretto not present
+      ansible.builtin.set_fact:
+        java_home: "/usr/lib/jvm/java-1.{{ java_version }}.0-openjdk"
+      when:
+        - corretto_result is failed
+        - openjdk_result is succeeded
 
-  - name: Set java_home for Corretto if present
-    ansible.builtin.set_fact:
-      java_home: "/usr/lib/jvm/java-{{ java_version }}-amazon-corretto"
-    when: corretto_result is succeeded
+    - name: Create /etc/profile.d/java.sh to export JAVA_HOME and add to PATH
+      ansible.builtin.copy:
+        dest: /etc/profile.d/java.sh
+        content: |
+          #!/bin/sh
+          # Added by Ansible: JAVA_HOME and PATH
+          export JAVA_HOME={{ java_home | default('') }}
+          if [ -n "$JAVA_HOME" ]; then
+            export PATH=$JAVA_HOME/bin:$PATH
+          fi
+        owner: root
+        group: root
+        mode: '0644'
+      when: java_home is defined
 
-  - name: Set java_home for OpenJDK if Corretto not present
-    ansible.builtin.set_fact:
-      java_home: "/usr/lib/jvm/java-1.{{ java_version }}.0-openjdk"
-    when:
+    - name: Ensure java is callable (check java -version)
+      ansible.builtin.command:
+        cmd: java -version
+      register: java_check
+      changed_when: false
+      failed_when: java_check.rc != 0
 
-      - corretto_result is failed
-      - openjdk_result is succeeded
-
-  - name: Create /etc/profile.d/java.sh to export JAVA_HOME and add to PATH
-    ansible.builtin.copy:
-      dest: /etc/profile.d/java.sh
-      content: |
-        #!/bin/sh
-        # Added by Ansible: JAVA_HOME and PATH
-        export JAVA_HOME="{{ java_home | default('') }}"
-        if [ -n "$JAVA_HOME" ]; then
-          export PATH="$JAVA_HOME/bin:$PATH"
-        fi
-    owner: root
-    group: root
-    mode: '0644'
-    when: java_home is defined
-
-  - name: Ensure java is callable (check java -version)
-    ansible.builtin.command: java -version
-    register: java_check
-    changed_when: false
-    failed_when: java_check.rc != 0
-
-  - name: Show java version lines
-    ansible.builtin.debug:
-      msg: "{{ java_check.stderr_lines }}"
+    - name: Show java version lines
+      ansible.builtin.debug:
+        msg: "{{ java_check.stderr_lines }}"
