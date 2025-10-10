@@ -9,43 +9,43 @@
 
   - name: Ensure dnf cache is updated
     ansible.builtin.dnf:
-    update_cache: true
+      update_cache: true
 
   - name: Try install Amazon Corretto (java-{{ java_version }})
     ansible.builtin.dnf:
       name: "java-{{ java_version }}-amazon-corretto-devel"
-    state: present
+      state: present
     register: corretto_result
     ignore_errors: true
 
   - name: If Corretto install failed, try OpenJDK package
     ansible.builtin.dnf:
       name: "java-{{ java_version }}-openjdk-devel"
-    state: present
+      state: present
     when: corretto_result is failed
     register: openjdk_result
     ignore_errors: true
 
   - name: Fail if neither Corretto nor OpenJDK installed
     ansible.builtin.fail:
-    msg: "Failed to install Java: neither amazon-corretto nor openjdk package installed."
+      msg: "Failed to install Java: neither amazon-corretto nor openjdk package installed."
     when:
 
-    - corretto_result is failed
-    - openjdk_result is failed or openjdk_result is not defined
+      - corretto_result is failed
+      - openjdk_result is failed or openjdk_result is not defined
 
   - name: Set java_home for Corretto if present
     ansible.builtin.set_fact:
-    java_home: "/usr/lib/jvm/java-{{ java_version }}-amazon-corretto"
+      java_home: "/usr/lib/jvm/java-{{ java_version }}-amazon-corretto"
     when: corretto_result is succeeded
 
   - name: Set java_home for OpenJDK if Corretto not present
     ansible.builtin.set_fact:
-    java_home: "/usr/lib/jvm/java-1.{{ java_version }}.0-openjdk"
+      java_home: "/usr/lib/jvm/java-1.{{ java_version }}.0-openjdk"
     when:
 
-    - corretto_result is failed
-    - openjdk_result is succeeded
+      - corretto_result is failed
+      - openjdk_result is succeeded
 
   - name: Create /etc/profile.d/java.sh to export JAVA_HOME and add to PATH
     ansible.builtin.copy:
@@ -70,4 +70,4 @@
 
   - name: Show java version lines
     ansible.builtin.debug:
-    msg: "{{ java_check.stderr_lines }}"
+      msg: "{{ java_check.stderr_lines }}"
