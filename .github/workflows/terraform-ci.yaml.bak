@@ -18,8 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: .
-
+        working-directory: tf
 
     steps:
       - name: Checkout
@@ -51,11 +50,9 @@ jobs:
   apply:  
     runs-on: ubuntu-latest
     needs: terraform
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     defaults:
       run:
-        working-directory: .
-
+        working-directory: tf
   
     steps:
       - name: Checkout
