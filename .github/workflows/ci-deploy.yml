@@ -65,6 +65,9 @@ jobs:
     defaults:
       run:
         working-directory: .
+    outputs:
+      # ジョブ出力として hosts を公開（空文字が fallback）
+      hosts: ${{ steps.set-hosts.outputs.hosts || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -89,8 +92,8 @@ jobs:
           path: .
 
       - name: Terraform Apply
+        id: tf_apply
         run: |
-          # If plan file doesn't exist, create and apply; otherwise apply the plan
           if [ -f plan.tfplan ]; then
             terraform apply -input=false -auto-approve plan.tfplan
           else
@@ -98,12 +101,30 @@ jobs:
             terraform apply -input=false -auto-approve plan.tfplan
           fi
 
+      - name: Dump terraform outputs (json)
+        run: terraform output -json > tf_outputs.json
+
+      - name: Extract public IPs from terraform outputs and set as job output
+        id: set-hosts
+        run: |
+          # adjust the jq path if your output name differs (here: public_ips)
+          if jq -e '.public_ips' tf_outputs.json >/dev/null 2>&1; then
+            HOSTS=$(jq -r '.public_ips | join(",")' tf_outputs.json)
+          else
+            # fallback: try common single IP output
+            if jq -e '.public_ip' tf_outputs.json >/dev/null 2>&1; then
+              HOSTS=$(jq -r '.public_ip.value')
+            else
+              HOSTS=""
+            fi
+          fi
+          echo "hosts=$HOSTS" >> $GITHUB_OUTPUT
+
   # 3) Deploy: run Ansible after apply completes successfully
   deploy:
     name: Deploy Java (Ansible)
     runs-on: ubuntu-latest
     needs: apply
-    # Also ensure we only run deploy when apply ran on main push (protects PR runs)
     if: ${{ needs.apply.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     defaults:
       run:
@@ -120,53 +141,60 @@ jobs:
       - name: Install Ansible
         run: |
           python -m pip install --upgrade pip
-          pip install "ansible>=7.0"
+          pip install "ansible>=7.0" jq
 
-      - name: Write SSH private key
+      - name: Prepare SSH private key
         env:
           SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
           echo "$SSH_KEY" > ./id_rsa
           chmod 600 ./id_rsa
 
-      - name: Build inventory from HOSTS secret (or use inventory/hosts.ini)
-        env:
-          HOSTS: ${{ secrets.HOSTS }}
-          SSH_USER: ${{ secrets.SSH_USER }}
+      - name: Determine hosts (prefer secret, else use terraform output)
+        id: compute-hosts
         run: |
+          # If HOSTS secret is set, use it. Otherwise use apply job output.
+          if [ -n "${{ secrets.HOSTS }}" ]; then
+            echo "hosts=${{ secrets.HOSTS }}" >> $GITHUB_OUTPUT
+          elif [ -n "${{ needs.apply.outputs.hosts }}" ]; then
+            echo "hosts=${{ needs.apply.outputs.hosts }}" >> $GITHUB_OUTPUT
+          else
+            echo "hosts=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build inventory from computed hosts
+        run: |
+          mkdir -p inventory
+          echo "[java_servers]" > inventory/hosts.ini
+          HOSTS="${{ steps.compute-hosts.outputs.hosts }}"
           if [ -n "$HOSTS" ]; then
-            rm -f ./inventory/hosts.ini || true
-            mkdir -p ./inventory
-            echo "[java_servers]" > ./inventory/hosts.ini
             IFS=',' read -ra ADDR <<< "$HOSTS"
             for h in "${ADDR[@]}"; do
-              echo "${h} ansible_user=${SSH_USER}" >> ./inventory/hosts.ini
+              echo "${h} ansible_user=${{ secrets.SSH_USER }}" >> inventory/hosts.ini
             done
-            echo "Generated inventory:"
-            cat ./inventory/hosts.ini
+            cat inventory/hosts.ini
           else
-            echo "Using repository inventory/hosts.ini"
-            cat ./inventory/hosts.ini || true
+            echo "No hosts found. Ensure either secrets.HOSTS or terraform outputs.public_ips exist."
+            exit 1
           fi
 
       - name: Add hosts to known_hosts (ssh-keyscan)
-        env:
-          HOSTS: ${{ secrets.HOSTS }}
         run: |
           mkdir -p ~/.ssh
           touch ~/.ssh/known_hosts
-          if [ -n "$HOSTS" ]; then
-            IFS=',' read -ra ADDR <<< "$HOSTS"
-            for h in "${ADDR[@]}"; do
-              ssh-keygen -F "$h" || ssh-keyscan -H "$h" >> ~/.ssh/known_hosts || true
-            done
-          fi
-          echo "known_hosts (head):"
+          IFS=',' read -ra ADDR <<< "${{ steps.compute-hosts.outputs.hosts }}"
+          for h in "${ADDR[@]}"; do
+            ssh-keygen -F "$h" || ssh-keyscan -H "$h" >> ~/.ssh/known_hosts || true
+          done
           sed -n '1,10p' ~/.ssh/known_hosts || true
 
       - name: Run Ansible playbook (install Java)
         env:
           ANSIBLE_HOST_KEY_CHECKING: "False"
         run: |
-          ansible-playbook -i ./inventory/hosts.ini playbooks/install-java.yml \
-            --private-key ./id_rsa
+          ansible-playbook -i inventory/hosts.ini playbooks/install-java.yml --private-key ./id_rsa
+
+      - name: Cleanup private key (always)
+        if: always()
+        run: |
+          shred -u ./id_rsa || rm -f ./id_rsa
