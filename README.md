@@ -1,1 +1,3 @@
-# AWS-CI-CD
+この課題の目的
+-ワークフローによってTerraformを使用してAWS上にEC2を構築
+-AnsibleによってEC2にJavaのインストールを行う
