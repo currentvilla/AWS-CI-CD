@@ -1,3 +1,4 @@
-この課題の目的
+# AWS-CI-CD
+GitHubActions/Ansibleによって自動でEC2にJavaをインストールする
 -ワークフローによってTerraformを使用してAWS上にEC2を構築
 -AnsibleによってEC2にJavaのインストールを行う
